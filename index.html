@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Virtual Try‑On — AirFly (Eye‑Tracking, Fixed)</title>
+<title>Virtual Try‑On — AirFly (Eye‑Tracking)</title>
 <style>
-  :root{--bg:#0b0c10;--fg:#e8ecf1;--muted:#9aa3b2;--accent:#4c7dff}
+  :root{--bg:#0b0c10;--fg:#e8ecf1;--muted:#9aa3b2;--card:#171a21;--accent:#4c7dff}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
   header{padding:10px 12px;background:#12141a;border-bottom:1px solid rgba(255,255,255,.06);position:sticky;top:0;z-index:10}
@@ -26,7 +26,7 @@
 </style>
 </head>
 <body>
-<header><h1>Virtual Try‑On — AirFly (Eye‑Tracking, Fixed)</h1></header>
+<header><h1>Virtual Try‑On — AirFly (Eye‑Tracking)</h1></header>
 
 <div class="toolbar">
   <input id="file" type="file" accept="image/*" />
@@ -82,7 +82,7 @@
     track:$('#track'), deviceSelect:$('#deviceSelect'), refreshDevices:$('#refreshDevices'),
     guide:$('#guide'), closeGuide:$('#closeGuide'), openGuide:$('#openGuide'), toast:$('#toast')};
 
-  let stream=null, lastVideoTime=-1, modelReady=false;
+  let stream=null, lastVideoTime=-1;
 
   function toast(m,ms=2200){ els.toast.textContent=m; els.toast.style.display='block';
     clearTimeout(els.toast._t); els.toast._t=setTimeout(()=>els.toast.style.display='none',ms); }
@@ -95,52 +95,48 @@
   }
   setEnv();
 
-  // Map normalized [0..1] video coords to STAGE-LOCAL CSS pixels (no viewport offsets)
+  // Map normalized [0..1] coords from the video frame to CSS pixels in the stage (object-fit: contain)
   function stageCoords(nx, ny){
-    const stage = els.stage;
-    const sW = stage.clientWidth, sH = stage.clientHeight;
+    const rect = els.stage.getBoundingClientRect();
     const vW = els.video.videoWidth || 1280, vH = els.video.videoHeight || 720;
-    const scale = Math.min(sW/vW, sH/vH); // object-fit: contain
+    const boxW = rect.width, boxH = rect.height;
+    const scale = Math.min(boxW/vW, boxH/vH);
     const drawW = vW*scale, drawH = vH*scale;
-    const offX = (sW - drawW)/2;
-    const offY = (sH - drawH)/2;
+    const offX = rect.left + (boxW - drawW)/2;
+    const offY = rect.top  + (boxH - drawH)/2;
     return { x: offX + nx*drawW, y: offY + ny*drawH };
-  }
-
-  function composeTransform(cx, cy, baseAngle, baseScale){
-    const manualScale = parseFloat(els.scale.value);
-    const manualRot = parseFloat(els.rot.value);
-    const sx = baseScale * manualScale;
-    const angle = baseAngle + manualRot;
-    els.overlay.style.left = cx + 'px';
-    els.overlay.style.top  = cy + 'px';
-    els.overlay.style.transform = `translate(-50%,-50%) rotate(${angle}deg) scale(${sx})`;
-    els.glasses.style.opacity = parseFloat(els.op.value);
   }
 
   function placeGlasses(leftEye, rightEye){
     const pL = stageCoords(leftEye.x, leftEye.y);
     const pR = stageCoords(rightEye.x, rightEye.y);
-    const cx = (pL.x + pR.x) / 2;
-    const cy = (pL.y + pR.y) / 2;
+    const cx = (pL.x + pR.x) / 2, cy = (pL.y + pR.y) / 2;
     const dx = pR.x - pL.x, dy = pR.y - pL.y;
     const dist = Math.hypot(dx, dy);
     const angleDeg = Math.atan2(dy, dx) * 180/Math.PI;
     const desiredWidth = dist * parseFloat(els.fit.value);
-    const baseScale = desiredWidth / 520; // overlay native width
-    composeTransform(cx, cy, angleDeg, baseScale);
-    els.diag.textContent = `angle ${angleDeg.toFixed(1)}°, eyeDist ${Math.round(dist)}px, baseScale ${baseScale.toFixed(2)}`;
+    const scale = desiredWidth / 520; // base overlay width
+    els.overlay.style.left = cx + 'px';
+    els.overlay.style.top  = cy + 'px';
+    els.overlay.style.transform = `translate(-50%,-50%) rotate(${angleDeg}deg) scale(${scale})`;
+    els.diag.textContent = `angle ${angleDeg.toFixed(1)}°, eyeDist ${Math.round(dist)}px, scale ${scale.toFixed(2)}`;
   }
 
+  // Manual offsets layer
+  function applyManual(){
+    const cur = els.overlay.style.transform || 'translate(-50%,-50%)';
+    els.overlay.style.transform = cur + ` rotate(${parseFloat(els.rot.value)}deg) scale(${parseFloat(els.scale.value)})`;
+    els.glasses.style.opacity = parseFloat(els.op.value);
+  }
   ['input','change'].forEach(ev=>{
-    els.scale.addEventListener(ev, ()=>{/* applied next frame */});
-    els.rot.addEventListener(ev, ()=>{/* applied next frame */});
-    els.op.addEventListener(ev, ()=>{ els.glasses.style.opacity=parseFloat(els.op.value); });
-    els.fit.addEventListener(ev, ()=>{/* applied next frame */});
+    els.scale.addEventListener(ev, applyManual);
+    els.rot.addEventListener(ev, applyManual);
+    els.op.addEventListener(ev, applyManual);
+    els.fit.addEventListener(ev, ()=>{ /* re-applied next frame */ });
   });
 
   // MediaPipe Face Landmarker
-  import {{ FaceLandmarker, FilesetResolver }} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+  import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
   let landmarker=null;
   (async ()=>{
     const fileset = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
@@ -148,14 +144,13 @@
       baseOptions: { modelAssetPath: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm/face_landmarker.task" },
       runningMode: "VIDEO", numFaces: 1, outputFaceBlendshapes: false, outputFacialTransformationMatrixes: false
     });
-    modelReady = true;
     els.status.textContent = "Tracker ready";
   })();
 
   async function listDevices(){
     try {
       const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
-      els.deviceSelect.innerHTML = '<option value="">Auto (front)</option>' + devs.map((d,i)=>`<option value="${{d.deviceId}}">${{d.label||('Camera '+(i+1))}}</option>`).join('');
+      els.deviceSelect.innerHTML = '<option value="">Auto (front)</option>' + devs.map((d,i)=>`<option value="${d.deviceId}">${d.label||('Camera '+(i+1))}</option>`).join('');
     } catch(e) {}
   }
   if(navigator.mediaDevices?.enumerateDevices) listDevices();
@@ -170,7 +165,7 @@
       stream = await navigator.mediaDevices.getUserMedia(constraints);
       els.video.srcObject = stream;
       els.photo.hidden = true;
-      els.status.textContent = modelReady? "Camera on" : "Camera on — loading tracker…";
+      els.status.textContent = "Camera on";
       requestAnimationFrame(loop);
     } catch(err) {
       console.error(err);
@@ -197,21 +192,22 @@
     els.photo.src=c.toDataURL('image/png'); els.photo.hidden=false; els.status.textContent='Frame captured'; });
 
   async function loop(ts){
-    if(!stream || !els.track.checked){ return requestAnimationFrame(loop); }
-    if(!modelReady || !landmarker){ els.status.textContent='Loading tracker…'; return requestAnimationFrame(loop); }
-    if(els.video.readyState < 2){ return requestAnimationFrame(loop); }
-    if(lastVideoTime === els.video.currentTime){ return requestAnimationFrame(loop); }
+    if(!stream || !els.track.checked || !landmarker) return requestAnimationFrame(loop);
+    if(els.video.readyState < 2) return requestAnimationFrame(loop);
+    if(lastVideoTime === els.video.currentTime) return requestAnimationFrame(loop);
     lastVideoTime = els.video.currentTime;
     const result = await landmarker.detectForVideo(els.video, Date.now());
     if(result.faceLandmarks && result.faceLandmarks.length){
       const lm = result.faceLandmarks[0];
+      // Eye centers: average inner/outer corner indices
       const left={ x:(lm[33].x+lm[133].x)/2, y:(lm[33].y+lm[133].y)/2 };
       const right={ x:(lm[362].x+lm[263].x)/2, y:(lm[362].y+lm[263].y)/2 };
       placeGlasses(left, right);
+      // Apply manual offsets after tracking transform
+      els.overlay.style.transform = els.overlay.style.transform + ` rotate(${parseFloat(els.rot.value)}deg) scale(${parseFloat(els.scale.value)})`;
+      els.glasses.style.opacity = parseFloat(els.op.value);
       els.status.textContent = "Tracking";
-    } else {
-      els.status.textContent = "Face not found";
-    }
+    } else { els.status.textContent = "Face not found"; }
     requestAnimationFrame(loop);
   }
 </script>
